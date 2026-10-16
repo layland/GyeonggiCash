@@ -25,6 +25,29 @@
 
 ## 빌드
 
+### GitHub 자동 서명 빌드와 릴리스
+
+`main`에 push할 때마다 GitHub Actions가 예약 로직 검증 → 릴리스 APK 빌드 → Android Lint → APK 서명 검증을 수행하고, 성공하면 [Releases](https://github.com/layland/GyeonggiCash/releases)에 APK와 체크섬, 서명 인증서 정보를 게시합니다. 버전은 `0.1.<실행번호>`, Android versionCode는 실행번호입니다. Actions 화면에서 수동 실행도 가능합니다.
+
+**최초 한 번 서명키 설정이 필요합니다.** JDK, OpenSSL, [GitHub CLI](https://cli.github.com/)가 설치된 개인 컴퓨터에서 `gh auth login` 후 저장소를 내려받아 실행하세요.
+
+```sh
+bash tools/setup-signing.sh
+```
+
+스크립트는 고정 릴리스 키를 생성하고 다음 Repository Secrets를 등록한 뒤 첫 빌드를 시작합니다. 이미 앱에 사용하던 서명키가 있다면 새로 생성하지 말고 기존 키를 아래 Secrets에 등록하세요.
+
+| Secret | 값 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | JKS 파일을 Base64로 인코딩한 값 |
+| `ANDROID_KEYSTORE_PASSWORD` | 키스토어 암호 |
+| `ANDROID_KEY_ALIAS` | 서명키 별칭 |
+| `ANDROID_KEY_PASSWORD` | 서명키 암호 |
+
+설정 위치: [Repository Secrets](https://github.com/layland/GyeonggiCash/settings/secrets/actions). 스크립트가 만든 `signing/` 폴더의 키와 암호는 안전하게 백업해야 합니다. 키를 잃으면 기존 설치 앱의 업데이트가 불가능합니다. 공개 저장소에 키나 암호를 올리지 마세요. 서명 설정이 누락되면 릴리스 작업은 오류를 표시하고 중지합니다. 이 저장소에 연결된 도구는 Secrets 등록 기능을 제공하지 않으므로 최초 등록은 소유자 컴퓨터에서 진행해야 합니다.
+
+### 로컬 빌드
+
 Android Studio에서 프로젝트를 열고 SDK 35, JDK 17, Gradle 8.9로 빌드하세요. Gradle 실행 파일은 저장소에 포함하지 않았습니다.
 
 ```sh
