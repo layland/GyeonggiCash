@@ -29,7 +29,15 @@
 
 `main`에 push할 때마다 GitHub Actions가 예약 로직 검증 → 릴리스 APK 빌드 → Android Lint → APK 서명 검증을 수행하고, 성공하면 [Releases](https://github.com/layland/GyeonggiCash/releases)에 APK와 체크섬, 서명 인증서 정보를 게시합니다. 버전은 `0.1.<실행번호>`, Android versionCode는 실행번호입니다. Actions 화면에서 수동 실행도 가능합니다.
 
-**최초 한 번 서명키 설정이 필요합니다.** JDK, OpenSSL, [GitHub CLI](https://cli.github.com/)가 설치된 개인 컴퓨터에서 `gh auth login` 후 저장소를 내려받아 실행하세요.
+빌드와 릴리스 대상은 **이 프로젝트 `layland/GyeonggiCash`**입니다. [MyParkingAndroid의 릴리스 workflow](https://github.com/layland/MyParkingAndroid/blob/master/.github/workflows/release-apk.yml)는 구현 방식만 참고했으며 변경하지 않습니다. 동일한 이름의 네 개 `ANDROID_*` Secrets를 이 저장소에서 읽고, `softprops/action-gh-release@v2`로 **GyeonggiCash Releases**에 사전 릴리스를 게시합니다. 저장소별 Secrets는 자동 공유되지 않으며 GitHub API로 기존 Secret 값을 다시 읽을 수도 없습니다.
+
+**최초 한 번 이 프로젝트의 서명키 설정이 필요합니다.** 이미 사용할 키가 있다면 JDK와 [GitHub CLI](https://cli.github.com/)가 설치된 개인 컴퓨터에서 `gh auth login` 후 다음 명령을 실행하세요. 암호는 화면에 표시되지 않는 입력으로 받습니다. 기존 키를 변경하거나 새 키를 생성하지 않습니다.
+
+```sh
+bash tools/import-signing.sh /path/to/existing.jks 실제키별칭
+```
+
+이 앱 전용으로 새 키를 만들려면 OpenSSL도 설치한 뒤 실행하세요.
 
 ```sh
 bash tools/setup-signing.sh
