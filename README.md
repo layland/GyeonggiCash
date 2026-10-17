@@ -54,4 +54,4 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`
 bash tools/test.sh
 ```
 
-월 경계, 연말, 윤년, 한국 시간과 지연 허용 범위를 검증합니다. 실제 경기지역화폐 화면·접근성 노출·절전 상태·재부팅 후 동작은 Android 실기기에서 확인해야 합니다. 현재 이 환경에는 Android SDK가 없어 Android 빌드와 실기기 검증은 수행하지 않았습니다.
+월 경계, 연말, 윤년, 한국 시간과 지연 허용 범위를 검증합니다. 실제 경기지역화폐 화면·접근성 노출·절전 상태·재부팅 후 동작은 Android 실기기에서 확인해야 합니다. GitHub Actions에서 릴리스 APK 빌드, Android Lint, APK 서명·패키지명·버전 검증을 통과했습니다. Android 실기기 동작은 아직 검증하지 않았습니다.
