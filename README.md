@@ -27,32 +27,16 @@
 
 ### GitHub 자동 서명 빌드와 릴리스
 
-`main`에 push할 때마다 GitHub Actions가 예약 로직 검증 → 릴리스 APK 빌드 → Android Lint → APK 서명 검증을 수행하고, 성공하면 [Releases](https://github.com/layland/GyeonggiCash/releases)에 APK와 체크섬, 서명 인증서 정보를 게시합니다. 버전은 `0.1.<실행번호>`, Android versionCode는 실행번호입니다. Actions 화면에서 수동 실행도 가능합니다.
+[MyExercise](https://github.com/layland/MyExercise)와 같은 분리 빌드 방식을 사용합니다.
 
-빌드와 릴리스 대상은 **이 프로젝트 `layland/GyeonggiCash`**입니다. [MyParkingAndroid의 릴리스 workflow](https://github.com/layland/MyParkingAndroid/blob/master/.github/workflows/release-apk.yml)는 구현 방식만 참고했으며 변경하지 않습니다. 동일한 이름의 네 개 `ANDROID_*` Secrets를 이 저장소에서 읽고, `softprops/action-gh-release@v2`로 **GyeonggiCash Releases**에 사전 릴리스를 게시합니다. 저장소별 Secrets는 자동 공유되지 않으며 GitHub API로 기존 Secret 값을 다시 읽을 수도 없습니다.
+1. 소스는 **layland/GyeonggiCash main**에 저장합니다.
+2. **layland/MyParkingAndroid의 build/gyeonggicash 전용 브랜치**에서 GyeonggiCash main을 내려받고 기존 Android Secrets로 서명 빌드합니다. 주차앱의 기본 브랜치와 MyExercise 빌드 브랜치는 변경하지 않습니다.
+3. 빌드 원본은 `gyeonggicash-v0.1.N` 태그로 구분하고 주차앱의 최신 릴리스 표시를 변경하지 않습니다.
+4. 이 프로젝트의 게시 workflow가 원본 APK의 SHA-256, 서명, 패키지명과 내부 버전을 검증한 뒤 **[GyeonggiCash Releases](https://github.com/layland/GyeonggiCash/releases)**에 그대로 게시합니다. 재서명하거나 키를 공개하지 않습니다.
 
-**최초 한 번 이 프로젝트의 서명키 설정이 필요합니다.** 이미 사용할 키가 있다면 JDK와 [GitHub CLI](https://cli.github.com/)가 설치된 개인 컴퓨터에서 `gh auth login` 후 다음 명령을 실행하세요. 암호는 화면에 표시되지 않는 입력으로 받습니다. 기존 키를 변경하거나 새 키를 생성하지 않습니다.
+빌드 브랜치 push 시 서명 빌드가 시작됩니다. 에이전트 수정 작업에서는 소스 push 후 빌드 브랜치도 push하여 새 빌드를 실행합니다. 게시 workflow는 이 저장소 main push, 수동 실행, 15분 주기 예약 실행을 지원합니다. GitHub 예약 실행은 지연될 수 있습니다.
 
-```sh
-bash tools/import-signing.sh /path/to/existing.jks 실제키별칭
-```
-
-이 앱 전용으로 새 키를 만들려면 OpenSSL도 설치한 뒤 실행하세요.
-
-```sh
-bash tools/setup-signing.sh
-```
-
-스크립트는 고정 릴리스 키를 생성하고 다음 Repository Secrets를 등록한 뒤 첫 빌드를 시작합니다. 이미 앱에 사용하던 서명키가 있다면 새로 생성하지 말고 기존 키를 아래 Secrets에 등록하세요.
-
-| Secret | 값 |
-| --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | JKS 파일을 Base64로 인코딩한 값 |
-| `ANDROID_KEYSTORE_PASSWORD` | 키스토어 암호 |
-| `ANDROID_KEY_ALIAS` | 서명키 별칭 |
-| `ANDROID_KEY_PASSWORD` | 서명키 암호 |
-
-설정 위치: [Repository Secrets](https://github.com/layland/GyeonggiCash/settings/secrets/actions). 스크립트가 만든 `signing/` 폴더의 키와 암호는 안전하게 백업해야 합니다. 키를 잃으면 기존 설치 앱의 업데이트가 불가능합니다. 공개 저장소에 키나 암호를 올리지 마세요. 서명 설정이 누락되면 릴리스 작업은 오류를 표시하고 중지합니다. 이 저장소에 연결된 도구는 Secrets 등록 기능을 제공하지 않으므로 최초 등록은 소유자 컴퓨터에서 진행해야 합니다.
+서명키는 기존 빌드 저장소 Secrets에서만 사용하므로 GyeonggiCash에 새 Secrets를 등록할 필요가 없습니다. 이 앱은 동일한 키로 계속 서명해야 업데이트할 수 있습니다. 앱 전용 키로 전환하고 싶다면 기존 키 등록 스크립트는 별도로 사용할 수 있습니다.
 
 ### 로컬 빌드
 
