@@ -22,6 +22,8 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Select signed GyeonggiCash build
         id: apk
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
         run: python3 scripts/select_release_apk.py >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
         if: steps.apk.outputs.skip != 'true'
@@ -61,3 +63,4 @@ jobs:
           make_latest: true
           fail_on_unmatched_files: true
           files: dist/*
+

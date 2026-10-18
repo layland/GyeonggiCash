@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 BUILD_REPOSITORY = 'layland/MyParkingAndroid'
 TAG = re.compile(r'gyeonggicash-v0\.1\.(\d+)')
@@ -22,8 +23,13 @@ def releases(repo):
         page += 1
 
 
-def select(builds, published):
+def select(builds, published, expected_source=''):
     candidates = [r for r in builds if not r['draft'] and TAG.fullmatch(r['tag_name'])]
+    if expected_source:
+        if not re.fullmatch(r'[0-9a-f]{40}', expected_source):
+            raise ValueError('Invalid expected source revision')
+        source_link = f'https://github.com/layland/GyeonggiCash/commit/{expected_source}'
+        candidates = [r for r in candidates if source_link in (r.get('body') or '')]
     if not candidates:
         return {'skip': 'true'}
     release = max(candidates, key=lambda r: int(TAG.fullmatch(r['tag_name'])[1]))
@@ -46,8 +52,19 @@ def select(builds, published):
 
 
 if __name__ == '__main__':
-    result = select(releases(BUILD_REPOSITORY), list(releases(os.environ['GITHUB_REPOSITORY'])))
+    expected = os.environ.get('EXPECTED_SOURCE_SHA', '')
+    for attempt in range(41):
+        builds = list(releases(BUILD_REPOSITORY))
+        matching = [r for r in builds if not r['draft'] and TAG.fullmatch(r['tag_name'])
+                    and (not expected or f'https://github.com/layland/GyeonggiCash/commit/{expected}' in (r.get('body') or ''))]
+        if matching or not expected:
+            break
+        if attempt == 40:
+            raise RuntimeError('Signed build for this source was not ready within 10 minutes; check build/gyeonggicash.')
+        time.sleep(15)
+    result = select(builds, list(releases(os.environ['GITHUB_REPOSITORY'])), expected)
     for key, value in result.items():
         if '\n' in value or '\r' in value:
             raise ValueError('Invalid workflow output')
         print(f'{key}={value}')
+

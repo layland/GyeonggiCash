@@ -34,6 +34,14 @@ class SelectionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             select([r], [])
 
+    def test_expected_revision_does_not_publish_an_older_build(self):
+        self.assertEqual(select([release(1)], [], 'a' * 40), {'skip': 'true'})
+
+    def test_expected_revision_selects_matching_build(self):
+        matching = dict(release(1), body='Source: https://github.com/layland/GyeonggiCash/commit/' + 'a' * 40)
+        self.assertEqual(select([matching, release(2)], [], 'a' * 40)['version'], '0.1.1')
+
 
 if __name__ == '__main__':
     unittest.main()
+
