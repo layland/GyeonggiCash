@@ -2,78 +2,214 @@ package kr.local.timedclick;
 
 import android.accessibilityservice.AccessibilityService;
 import android.app.KeyguardManager;
+import android.graphics.PixelFormat;
 import android.os.*;
+import android.view.*;
 import android.view.accessibility.*;
 
 public class ClickService extends AccessibilityService {
     static ClickService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean running;
+    private boolean preparing, running, test;
+    private long dueWall, dueElapsed;
     private int step;
-    private long deadline;
-    private String target;
-    private final Runnable poll = this::tick;
+    private String target = "";
+    private AccessibilityNodeInfo cachedButton;
+    private View keepScreenOverlay;
+    private PowerManager.WakeLock wakeLock;
+    private final Runnable watchTask = this::watchSchedule;
+    private final Runnable probeTask = this::probe;
+    private final Runnable fireTask = () -> Schedule.dispatch(this, test, dueWall);
+    private final Runnable prevalidateTask = () -> { cachedButton = null; probe(); };
 
-    @Override protected void onServiceConnected() { instance = this; }
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) { /* Poll only during a short authorized run. */ }
+    @Override protected void onServiceConnected() {
+        instance = this;
+        if (Schedule.prefs(this).getBoolean("active", false)) {
+            state("실패", "서비스가 재시작되어 이전 준비를 종료했습니다.", false);
+        }
+        watchSchedule();
+    }
+    @Override public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (preparing && !running) {
+            handler.removeCallbacks(probeTask);
+            handler.postDelayed(probeTask, 100);
+        }
+    }
     @Override public void onInterrupt() { stopRun("접근성 서비스가 중단되었습니다."); }
-    @Override public void onDestroy() { stopRun("접근성 서비스 연결이 해제되었습니다."); instance = null; super.onDestroy(); }
+    @Override public void onDestroy() {
+        stopRun("접근성 서비스 연결이 해제되었습니다.");
+        instance = null;
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+    boolean active() { return preparing || running; }
 
-    void begin() {
+    void watchSchedule() {
+        handler.removeCallbacks(watchTask);
         if (running) return;
+        long monthly = Schedule.prefs(this).getBoolean("enabled", false)
+            ? Schedule.prefs(this).getLong("next", 0) : 0;
+        long trial = Schedule.prefs(this).getLong("testAt", 0);
+        boolean chosenTest = trial > 0 && (monthly <= 0 || trial <= monthly);
+        long chosen = chosenTest ? trial : monthly;
+        if (preparing && dueWall == chosen && test == chosenTest) return;
+        clearSession();
+        if (chosen <= 0) return;
+        long delay = chosen - System.currentTimeMillis();
+        if (delay > RunTiming.PREPARE_MS) {
+            handler.postDelayed(watchTask, delay - RunTiming.PREPARE_MS);
+            return;
+        }
+        test = chosenTest;
+        dueWall = chosen;
+        dueElapsed = RunTiming.dueElapsed(chosen, System.currentTimeMillis(), SystemClock.elapsedRealtime());
         target = Schedule.prefs(this).getString("package", "");
-        if (target.isEmpty()) { Schedule.log(this, "대상 앱을 먼저 선택하세요."); return; }
+        if (target.isEmpty()) { state("실패", "대상 앱을 선택하세요.", false); return; }
+        preparing = true;
         step = 0;
-        deadline = SystemClock.elapsedRealtime() + 15000;
+        state("준비", "대상 앱의 빠른 충전 화면을 열어 두세요.", true);
+        long remaining = RunTiming.remaining(dueElapsed, SystemClock.elapsedRealtime());
+        handler.postDelayed(fireTask, remaining);
+        handler.postDelayed(prevalidateTask, Math.max(0, remaining - 1000));
+        probe();
+    }
+    void executeDue(boolean isTest, long due) {
+        if (running) return;
+        if (!preparing || dueWall != due || test != isTest) {
+            clearSession();
+            test = isTest;
+            dueWall = due;
+            dueElapsed = RunTiming.dueElapsed(due, System.currentTimeMillis(), SystemClock.elapsedRealtime());
+            target = Schedule.prefs(this).getString("package", "");
+            step = 0;
+        }
+        preparing = false;
         running = true;
-        tick();
+        handler.removeCallbacks(probeTask);
+        handler.removeCallbacks(prevalidateTask);
+        handler.removeCallbacks(fireTask);
+        if (!screenAvailable()) { finish("실패", "화면이 꺼져 있거나 잠겨 있어 클릭하지 않았습니다."); return; }
+        state("클릭 중", "버튼을 다시 확인하고 있습니다.", true);
+        probe();
+    }
+    private boolean screenAvailable() {
+        return !getSystemService(KeyguardManager.class).isKeyguardLocked()
+            && getSystemService(PowerManager.class).isInteractive();
+    }
+    private void probe() {
+        handler.removeCallbacks(probeTask);
+        if (!active()) return;
+        if (RunTiming.expired(dueElapsed, SystemClock.elapsedRealtime())) {
+            if (running) finish("실패", "실행 시간 안에 버튼을 확인하지 못했습니다.");
+            else Schedule.dispatch(this, test, dueWall);
+            return;
+        }
+        AccessibilityNodeInfo root = screenAvailable() ? getRootInActiveWindow() : null;
+        boolean correctApp = root != null && target.equals(String.valueOf(root.getPackageName()));
+        if (!correctApp) {
+            cachedButton = null;
+            releaseScreen();
+            if (running) { finish("실패", "선택한 앱이 전면에 없어 실행을 중지했습니다."); return; }
+            state("대기", "잠금을 풀고 대상 앱의 빠른 충전 화면을 열어 주세요.", true);
+            handler.postDelayed(probeTask, 500);
+            return;
+        }
+        keepScreen();
+        boolean sheet = AccessibilityMatcher.regionSheet(root);
+        if (step == 0 && sheet) step = 1;
+        // A city match alone is insufficient: require the region-selection screen.
+        String label = step == 0 ? AccessibilityMatcher.QUICK : AccessibilityMatcher.CITY;
+        AccessibilityNodeInfo fresh = step == 1 && !sheet ? null : AccessibilityMatcher.uniqueButton(root, label);
+        if (cachedButton != null && (!cachedButton.refresh() || !cachedButton.equals(fresh))) cachedButton = null;
+        if (cachedButton == null) cachedButton = fresh;
+        if (!running) {
+            state(cachedButton == null ? "대기" : "준비 완료",
+                cachedButton == null ? "대상 버튼을 하나로 식별할 수 없습니다." : label + " 확인됨 · 예약 시각까지 대기", true);
+            if (cachedButton == null) handler.postDelayed(probeTask, 500);
+            return;
+        }
+        if (cachedButton == null) { handler.postDelayed(probeTask, 150); return; }
+        long clickWall = System.currentTimeMillis();
+        long delay = SystemClock.elapsedRealtime() - dueElapsed;
+        boolean accepted = cachedButton.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        android.content.SharedPreferences.Editor timing = Schedule.prefs(this).edit()
+            .putLong("clickWall", clickWall).putLong("clickDue", dueWall)
+            .putLong("clickDelay", delay).putString("clickLabel", label).putBoolean("clickAccepted", accepted);
+        if (step == 0 || !Schedule.prefs(this).getBoolean("sessionFirstRecorded", false)) {
+            timing.putLong("firstClickWall", clickWall).putLong("firstClickDelay", delay)
+                .putBoolean("sessionFirstRecorded", true);
+        }
+        timing.apply();
+        cachedButton = null;
+        if (!accepted) { finish("실패", label + " 클릭 요청이 거부되어 재시도하지 않았습니다."); return; }
+        if (step == 1) {
+            finish("클릭 요청 완료", "수원시 선택 클릭을 요청했습니다. 충전 완료 여부는 직접 확인하세요.");
+        } else {
+            step = 1;
+            state("클릭 중", "빠른 충전 클릭 요청됨 · 지역 선택 화면을 기다립니다.", true);
+            handler.postDelayed(probeTask, 100);
+        }
     }
     void stopRun(String reason) {
-        handler.removeCallbacks(poll);
-        if (running) Schedule.log(this, reason);
+        handler.removeCallbacks(watchTask);
+        if (active()) {
+            clearSession();
+            state("중지", reason, false);
+            Schedule.log(this, reason);
+        } else clearSession();
+    }
+    private void finish(String status, String detail) {
+        clearSession();
+        state(status, detail, false);
+        Schedule.log(this, detail);
+        handler.post(watchTask);
+    }
+    private void state(String status, String detail, boolean active) {
+        android.content.SharedPreferences p = Schedule.prefs(this);
+        if (status.equals(p.getString("state", "")) && detail.equals(p.getString("detail", ""))
+                && active == p.getBoolean("active", false)) return;
+        p.edit().putString("state", status).putString("detail", detail).putBoolean("active", active).apply();
+    }
+    private void clearSession() {
+        handler.removeCallbacks(probeTask);
+        handler.removeCallbacks(prevalidateTask);
+        handler.removeCallbacks(fireTask);
+        preparing = false;
         running = false;
+        cachedButton = null;
+        releaseScreen();
     }
-    private void tick() {
-        if (!running) return;
-        if (SystemClock.elapsedRealtime() > deadline) { stopRun("버튼을 찾지 못해 종료했습니다. 직접 화면을 확인하세요."); return; }
-        if (getSystemService(KeyguardManager.class).isKeyguardLocked()
-                || !getSystemService(PowerManager.class).isInteractive()) {
-            stopRun("화면이 꺼져 있거나 잠겨 있어 실행을 중지했습니다."); return;
+    private void keepScreen() {
+        if (keepScreenOverlay != null) return;
+        View overlay = new View(this);
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(1, 1,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE, PixelFormat.TRANSLUCENT);
+        params.gravity = Gravity.TOP | Gravity.START;
+        params.setTitle("지역화폐 실행 준비 화면 유지");
+        try {
+            getSystemService(WindowManager.class).addView(overlay, params);
+            keepScreenOverlay = overlay;
+            wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
+                getPackageName() + ":click-session");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire(RunTiming.PREPARE_MS + RunTiming.GRACE_MS + 5000);
+            Schedule.prefs(this).edit().putBoolean("screenKept", true).apply();
+        } catch (RuntimeException e) {
+            releaseScreen();
         }
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) { handler.postDelayed(poll, 150); return; }
-        if (!target.equals(String.valueOf(root.getPackageName()))) {
-            stopRun("선택한 앱이 전면에 없어 실행을 중지했습니다."); return;
-        }
-        // If the region sheet was already opened by the user, only select the region.
-        if (step == 0 && has(root, "수원시")) step = 1;
-        String label = step == 0 ? "빠른 충전 바로가기" : "수원시";
-        AccessibilityNodeInfo node = find(root, label);
-        boolean clicked = false;
-        for (int depth = 0; node != null && depth < 5; depth++, node = node.getParent()) {
-            if (node.isVisibleToUser() && node.isEnabled() && node.isClickable()) {
-                clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                break;
-            }
-        }
-        if (clicked) {
-            if (step == 1) { stopRun("수원시 선택을 요청했습니다. 이후 충전·인증·결제는 직접 진행하세요."); return; }
-            step = 1;
-        }
-        handler.postDelayed(poll, clicked ? 300 : 150);
     }
-    private static boolean has(AccessibilityNodeInfo root, String text) { return find(root, text) != null; }
-    private static String clean(CharSequence text) {
-        return text == null ? "" : text.toString().replaceAll("\\s+", "").replace("›", "").replace("〉", "").replace(">", "");
-    }
-    private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, String label) {
-        if (node == null || !node.isVisibleToUser()) return null;
-        String wanted = clean(label);
-        if (clean(node.getText()).equals(wanted) || clean(node.getContentDescription()).equals(wanted)) return node;
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo match = find(node.getChild(i), label);
-            if (match != null) return match;
+    private void releaseScreen() {
+        if (keepScreenOverlay != null) {
+            try { getSystemService(WindowManager.class).removeView(keepScreenOverlay); }
+            catch (RuntimeException ignored) { /* Already removed by the system. */ }
+            keepScreenOverlay = null;
         }
-        return null;
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        wakeLock = null;
+        if (Schedule.prefs(this).getBoolean("screenKept", false))
+            Schedule.prefs(this).edit().putBoolean("screenKept", false).apply();
     }
 }
+

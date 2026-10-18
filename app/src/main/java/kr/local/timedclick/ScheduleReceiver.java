@@ -5,16 +5,18 @@ import android.content.*;
 public class ScheduleReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
-        boolean test = "TEST".equals(action);
-        if (!test && !"MONTHLY".equals(action)) { Schedule.restore(context); return; }
-        if (!test && !Schedule.prefs(context).getBoolean("enabled", false)) return;
-        long due = Schedule.prefs(context).getLong(test ? "testAt" : "next", 0);
-        // Consume before dispatch: a duplicate broadcast must not repeat a click sequence.
-        Schedule.prefs(context).edit().putLong(test ? "testAt" : "next", 0).commit();
-        if (MonthlyTime.timely(due, System.currentTimeMillis())) {
-            if (ClickService.instance != null) ClickService.instance.begin();
-            else Schedule.log(context, "접근성 서비스가 연결되지 않아 실행하지 못했습니다.");
-        } else if (due > 0) Schedule.log(context, "알람이 지연되어 이번 실행을 건너뛰었습니다.");
-        if (!test) Schedule.restore(context);
+        if ("PREPARE".equals(action)) { Schedule.notifyService(); return; }
+        if ("TEST".equals(action) || "MONTHLY".equals(action)) {
+            boolean test = "TEST".equals(action);
+            // Legacy alarms from the previous app version may have no due extra.
+            long due = intent.getLongExtra("due", Schedule.prefs(context).getLong(test ? "testAt" : "next", 0));
+            Schedule.dispatch(context, test, due);
+            return;
+        }
+        if (Intent.ACTION_TIME_CHANGED.equals(action) && ClickService.instance != null)
+            ClickService.instance.stopRun("기기 시각 변경으로 준비를 다시 설정합니다.");
+        Schedule.restore(context);
+        Schedule.notifyService();
     }
 }
+

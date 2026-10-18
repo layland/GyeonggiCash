@@ -43,6 +43,9 @@ public class MainActivity extends Activity {
         status = text("", 15);
         button("1. 경기지역화폐 앱 선택", this::chooseApp);
         button("2. 접근성 서비스 설정", () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        text("접근성이 차단되면: 아래 앱 정보 → 우측 상단 ⋮ → 제한된 설정 허용을 선택한 뒤 접근성을 켜세요.", 14);
+        button("제한된 설정 허용 · 앱 정보 열기", () -> startActivity(new Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
         button("3. 정확한 알람 권한 설정", () -> {
             if (Build.VERSION.SDK_INT >= 31) startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
                 Uri.parse("package:" + getPackageName())));
@@ -50,7 +53,8 @@ public class MainActivity extends Activity {
         });
         button("매월 예약 켜기", () -> {
             if (!ready()) return;
-            Schedule.prefs(this).edit().putBoolean("enabled", true).apply();
+            Schedule.prefs(this).edit().putBoolean("enabled", true).putString("state", "예약됨")
+                .putString("detail", "실행 2분 전부터 화면과 버튼을 확인합니다.").apply();
             Schedule.restore(this);
             renderStatus();
         });
@@ -66,6 +70,11 @@ public class MainActivity extends Activity {
         button("대상 앱 열기", () -> {
             Intent launch = getPackageManager().getLaunchIntentForPackage(Schedule.prefs(this).getString("package", ""));
             if (launch != null) startActivity(launch); else toast("대상 앱을 선택하세요.");
+        });
+        button("준비 상태 확인", () -> {
+            if (ClickService.instance != null) ClickService.instance.watchSchedule();
+            toast("실행 2분 전부터 준비합니다. 화면과 버튼 상태는 위에 표시됩니다.");
+            renderStatus();
         });
         button("예약 끄기 · 실행 중지", () -> { Schedule.cancel(this); renderStatus(); });
         text("실행 전 준비\n• 화면 잠금을 풀고 대상 앱의 빠른 충전 화면을 열어 두세요.\n• 기기의 날짜·시간을 자동으로 설정하세요.\n• 배터리 절전·앱 자동 종료 설정을 확인하세요.\n\n정각 실행은 기기 상태와 운영체제 지연에 따라 달라집니다. 버튼 글자를 읽을 수 없거나 앱 화면이 바뀌면 실행하지 못할 수 있습니다. 실행 내역은 이 화면에서 확인하세요.", 15);
@@ -114,8 +123,27 @@ public class MainActivity extends Activity {
             + " · 알람: " + (Schedule.allowed(this) ? "허용" : "권한 필요")
             + "\n월간 예약: " + (prefs.getBoolean("enabled", false) ? "켜짐" : "꺼짐")
             + "\n다음 실행(한국): " + at
-            + "\n\n최근 내역\n" + prefs.getString("result", "실행 내역 없음"));
+            + "\n실행 상태: " + prefs.getString("state", "대기")
+            + "\n" + prefs.getString("detail", "예약을 켜고 실행 2분 전에 대상 화면을 열어 주세요.")
+            + "\n화면 유지: " + (prefs.getBoolean("screenKept", false) && ClickService.instance != null ? "사용 중" : "준비 구간에 자동 적용")
+            + "\n\n" + clickTiming(prefs)
+            + "\n최근 내역\n" + prefs.getString("result", "실행 내역 없음"));
+    }
+    private String clickTiming(android.content.SharedPreferences prefs) {
+        long at = prefs.getLong("clickWall", 0);
+        if (at <= 0) return "클릭 기록 없음\n";
+        DateTimeFormatter format = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS");
+        String first = Instant.ofEpochMilli(prefs.getLong("firstClickWall", at)).atZone(MonthlyTime.SEOUL).format(format);
+        String last = Instant.ofEpochMilli(at).atZone(MonthlyTime.SEOUL).format(format);
+        String target = Instant.ofEpochMilli(prefs.getLong("clickDue", at)).atZone(MonthlyTime.SEOUL).format(format);
+        return "목표 시각(한국): " + target
+            + "\n최근 실행 첫 클릭(기기 시각): " + first
+            + "\n목표 대비 지연: " + prefs.getLong("firstClickDelay", 0) + "ms"
+            + "\n마지막 버튼: " + prefs.getString("clickLabel", "") + " · " + last
+            + "\n클릭 요청: " + (prefs.getBoolean("clickAccepted", false) ? "접수됨" : "거부됨")
+            + "\n클릭 호출 시각이며 서버 도착·충전 완료 시각은 아닙니다.\n";
     }
     @Override protected void onResume() { super.onResume(); handler.post(refresh); }
     @Override protected void onPause() { handler.removeCallbacks(refresh); super.onPause(); }
 }
+
