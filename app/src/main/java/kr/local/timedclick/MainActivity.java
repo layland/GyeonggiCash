@@ -125,6 +125,7 @@ public class MainActivity extends Activity {
             + "\n다음 실행(한국): " + at
             + "\n실행 상태: " + prefs.getString("state", "대기")
             + "\n" + prefs.getString("detail", "예약을 켜고 실행 2분 전에 대상 화면을 열어 주세요.")
+            + "\n최근 화면 진단: " + prefs.getString("windowDiagnostic", "시험 실행 또는 준비 중에 확인됩니다.")
             + "\n화면 유지: " + (prefs.getBoolean("screenKept", false) && ClickService.instance != null ? "사용 중" : "준비 구간에 자동 적용")
             + "\n\n" + clickTiming(prefs)
             + "\n최근 내역\n" + prefs.getString("result", "실행 내역 없음"));

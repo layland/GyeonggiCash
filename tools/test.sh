@@ -8,4 +8,6 @@ java -cp "$test_output" MonthlyTimeTest
 java -cp "$test_output" RunTimingTest
 java com.sun.tools.javac.Main -d "$test_output" tests/fakes/android/view/accessibility/AccessibilityNodeInfo.java app/src/main/java/kr/local/timedclick/AccessibilityMatcher.java tests/AccessibilityMatcherTest.java
 java -cp "$test_output" kr.local.timedclick.AccessibilityMatcherTest
+java com.sun.tools.javac.Main -d "$test_output" app/src/main/java/kr/local/timedclick/WindowPolicy.java tests/WindowPolicyTest.java
+java -cp "$test_output" WindowPolicyTest
 

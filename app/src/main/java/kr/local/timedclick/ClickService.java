@@ -6,6 +6,8 @@ import android.graphics.PixelFormat;
 import android.os.*;
 import android.view.*;
 import android.view.accessibility.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ClickService extends AccessibilityService {
     static ClickService instance;
@@ -14,6 +16,7 @@ public class ClickService extends AccessibilityService {
     private long dueWall, dueElapsed;
     private int step;
     private String target = "";
+    private String windowReason = "대상 앱 화면을 확인하는 중입니다.";
     private AccessibilityNodeInfo cachedButton;
     private View keepScreenOverlay;
     private PowerManager.WakeLock wakeLock;
@@ -100,18 +103,22 @@ public class ClickService extends AccessibilityService {
         handler.removeCallbacks(probeTask);
         if (!active()) return;
         if (RunTiming.expired(dueElapsed, SystemClock.elapsedRealtime())) {
-            if (running) finish("실패", "실행 시간 안에 버튼을 확인하지 못했습니다.");
+            if (running) finish("실패", "실행 시간 안에 클릭할 화면을 확인하지 못했습니다. " + windowReason);
             else Schedule.dispatch(this, test, dueWall);
             return;
         }
-        AccessibilityNodeInfo root = screenAvailable() ? getRootInActiveWindow() : null;
-        boolean correctApp = root != null && target.equals(String.valueOf(root.getPackageName()));
-        if (!correctApp) {
+        if (!screenAvailable() && running) {
+            finish("실패", "화면이 꺼져 있거나 잠겨 있어 실행을 중지했습니다."); return;
+        }
+        AccessibilityNodeInfo root = screenAvailable() ? targetRoot() : null;
+        if (root == null) {
             cachedButton = null;
             releaseScreen();
-            if (running) { finish("실패", "선택한 앱이 전면에 없어 실행을 중지했습니다."); return; }
-            state("대기", "잠금을 풀고 대상 앱의 빠른 충전 화면을 열어 주세요.", true);
-            handler.postDelayed(probeTask, 500);
+            state(running ? "화면 확인 중" : "대기", screenAvailable() ? windowReason
+                : "잠금을 풀고 대상 앱의 빠른 충전 화면을 열어 주세요.", true);
+            // Window roots can be temporarily null or belong to the keep-screen overlay.
+            // Never click another app; allow the selected app to become readable in this session.
+            handler.postDelayed(probeTask, running ? 150 : 500);
             return;
         }
         keepScreen();
@@ -128,7 +135,12 @@ public class ClickService extends AccessibilityService {
             if (cachedButton == null) handler.postDelayed(probeTask, 500);
             return;
         }
-        if (cachedButton == null) { handler.postDelayed(probeTask, 150); return; }
+        if (cachedButton == null) {
+            windowReason = step == 1 && !sheet ? "지역 선택 창이 아직 확인되지 않았습니다."
+                : "대상 앱 창은 확인했지만 ‘" + label + "’ 버튼을 하나로 식별하지 못했습니다.";
+            state("화면 확인 중", windowReason, true);
+            handler.postDelayed(probeTask, 150); return;
+        }
         long clickWall = System.currentTimeMillis();
         long delay = SystemClock.elapsedRealtime() - dueElapsed;
         boolean accepted = cachedButton.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -149,6 +161,51 @@ public class ClickService extends AccessibilityService {
             state("클릭 중", "빠른 충전 클릭 요청됨 · 지역 선택 화면을 기다립니다.", true);
             handler.postDelayed(probeTask, 100);
         }
+    }
+    private AccessibilityNodeInfo targetRoot() {
+        List<AccessibilityWindowInfo> windows = getWindows();
+        List<WindowPolicy.Window> descriptors = new ArrayList<>();
+        List<AccessibilityNodeInfo> roots = new ArrayList<>();
+        String topOwner = "";
+        int topLayer = Integer.MIN_VALUE;
+        int topWindowId = -1;
+        for (AccessibilityWindowInfo window : windows) {
+            AccessibilityNodeInfo root = window.getRoot();
+            String owner = root == null || root.getPackageName() == null ? null : root.getPackageName().toString();
+            boolean ownOverlay = window.getType() == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY
+                && (getPackageName().equals(owner) || "지역화폐 실행 준비 화면 유지".contentEquals(
+                    window.getTitle() == null ? "" : window.getTitle()));
+            boolean application = window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION;
+            descriptors.add(new WindowPolicy.Window(application, ownOverlay,
+                window.isFocused() || window.isActive(), window.getLayer(), owner));
+            roots.add(root);
+            if (application && window.getLayer() > topLayer) {
+                topLayer = window.getLayer(); topOwner = owner == null ? "읽을 수 없음" : owner;
+                topWindowId = window.getId();
+            }
+        }
+        int selected = WindowPolicy.select(descriptors, target);
+        AccessibilityNodeInfo result = selected >= 0 ? roots.get(selected) : null;
+        if (selected == WindowPolicy.NO_APPLICATION || selected == WindowPolicy.UNREADABLE) {
+            // A fresh active root may become readable before getWindows() catches up.
+            AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
+            if (activeRoot != null && target.equals(String.valueOf(activeRoot.getPackageName()))
+                    && (selected == WindowPolicy.NO_APPLICATION || activeRoot.getWindowId() == topWindowId)) result = activeRoot;
+        }
+        // Container roots may be marked invisible while their button children are visible.
+        // Individual clickable buttons are checked for visibility by AccessibilityMatcher.
+        if (result != null) {
+            windowReason = "대상 앱 창 확인됨";
+        } else {
+            result = null;
+            if (selected == WindowPolicy.BLOCKED) windowReason = "시스템 창 또는 다른 오버레이가 화면을 가리고 있습니다.";
+            else if (selected == WindowPolicy.OTHER_APPLICATION) windowReason = "다른 앱 창이 위에 있습니다. 선택: " + target + " / 감지: " + topOwner;
+            else windowReason = "접근성에서 대상 앱 창의 내용을 아직 읽지 못했습니다. 선택: " + target;
+        }
+        android.content.SharedPreferences p = Schedule.prefs(this);
+        if (!windowReason.equals(p.getString("windowDiagnostic", "")))
+            p.edit().putString("windowDiagnostic", windowReason).apply();
+        return result;
     }
     void stopRun(String reason) {
         handler.removeCallbacks(watchTask);
