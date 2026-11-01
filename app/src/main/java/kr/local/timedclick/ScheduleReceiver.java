@@ -5,6 +5,7 @@ import android.content.*;
 public class ScheduleReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
+        if ("STOP".equals(action)) { Schedule.cancel(context); return; }
         if ("PREPARE".equals(action)) { Schedule.notifyService(); return; }
         if ("TEST".equals(action) || "MONTHLY".equals(action)) {
             boolean test = "TEST".equals(action);
@@ -19,4 +20,3 @@ public class ScheduleReceiver extends BroadcastReceiver {
         Schedule.notifyService();
     }
 }
-

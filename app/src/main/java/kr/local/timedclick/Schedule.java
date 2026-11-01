@@ -60,6 +60,7 @@ final class Schedule {
     private static void failure(Context c, String text) {
         prefs(c).edit().putString("state", "실패").putString("detail", text).putBoolean("active", false).apply();
         log(c, text);
+        StatusNotifications.show(c, "실행하지 못했습니다", text, false, true);
     }
     static void cancel(Context c) {
         prefs(c).edit().putBoolean("enabled", false).putLong("next", 0).putLong("testAt", 0).apply();
@@ -68,6 +69,6 @@ final class Schedule {
         alarms(c).cancel(prepareIntent(c, 0));
         if (ClickService.instance != null) ClickService.instance.stopRun("사용자가 실행을 중지했습니다.");
         prefs(c).edit().putString("state", "중지").putString("detail", "모든 예약과 실행을 중지했습니다.").putBoolean("active", false).apply();
+        StatusNotifications.cancel(c);
     }
 }
-

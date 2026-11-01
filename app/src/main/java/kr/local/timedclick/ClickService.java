@@ -12,7 +12,7 @@ import java.util.List;
 public class ClickService extends AccessibilityService {
     static ClickService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean preparing, running, test;
+    private boolean preparing, running, test, preview;
     private long dueWall, dueElapsed;
     private int step;
     private String target = "";
@@ -24,6 +24,7 @@ public class ClickService extends AccessibilityService {
     private final Runnable probeTask = this::probe;
     private final Runnable fireTask = () -> Schedule.dispatch(this, test, dueWall);
     private final Runnable prevalidateTask = () -> { cachedButton = null; probe(); };
+    private final Runnable previewTimeout = () -> finish("실패", "화면을 확인하지 못했습니다. 로그인 후 준비를 다시 눌러 주세요.");
 
     @Override protected void onServiceConnected() {
         instance = this;
@@ -46,8 +47,11 @@ public class ClickService extends AccessibilityService {
         super.onDestroy();
     }
     boolean active() { return preparing || running; }
+    boolean isRunning() { return running; }
 
-    void watchSchedule() {
+    void watchSchedule() { watchSchedule(false); }
+    void prepareNow() { watchSchedule(true); }
+    private void watchSchedule(boolean requested) {
         handler.removeCallbacks(watchTask);
         if (running) return;
         long monthly = Schedule.prefs(this).getBoolean("enabled", false)
@@ -59,7 +63,7 @@ public class ClickService extends AccessibilityService {
         clearSession();
         if (chosen <= 0) return;
         long delay = chosen - System.currentTimeMillis();
-        if (delay > RunTiming.PREPARE_MS) {
+        if (delay > RunTiming.PREPARE_MS && !requested) {
             handler.postDelayed(watchTask, delay - RunTiming.PREPARE_MS);
             return;
         }
@@ -69,11 +73,15 @@ public class ClickService extends AccessibilityService {
         target = Schedule.prefs(this).getString("package", "");
         if (target.isEmpty()) { state("실패", "대상 앱을 선택하세요.", false); return; }
         preparing = true;
+        preview = requested && PreparationPolicy.previewOnly(System.currentTimeMillis(), chosen);
         step = 0;
-        state("준비", "대상 앱의 빠른 충전 화면을 열어 두세요.", true);
+        state("준비", "경기지역화폐 앱에서 버튼을 확인하고 있습니다. 로그인 화면이면 직접 로그인해 주세요.", true);
         long remaining = RunTiming.remaining(dueElapsed, SystemClock.elapsedRealtime());
-        handler.postDelayed(fireTask, remaining);
-        handler.postDelayed(prevalidateTask, Math.max(0, remaining - 1000));
+        if (preview) handler.postDelayed(previewTimeout, RunTiming.PREPARE_MS);
+        else {
+            handler.postDelayed(fireTask, remaining);
+            handler.postDelayed(prevalidateTask, Math.max(0, remaining - 1000));
+        }
         probe();
     }
     void executeDue(boolean isTest, long due) {
@@ -87,7 +95,9 @@ public class ClickService extends AccessibilityService {
             step = 0;
         }
         preparing = false;
+        preview = false;
         running = true;
+        handler.removeCallbacks(previewTimeout);
         handler.removeCallbacks(probeTask);
         handler.removeCallbacks(prevalidateTask);
         handler.removeCallbacks(fireTask);
@@ -130,6 +140,12 @@ public class ClickService extends AccessibilityService {
         if (cachedButton != null && (!cachedButton.refresh() || !cachedButton.equals(fresh))) cachedButton = null;
         if (cachedButton == null) cachedButton = fresh;
         if (!running) {
+            if (preview && cachedButton != null) {
+                String at = java.time.Instant.ofEpochMilli(dueWall).atZone(MonthlyTime.SEOUL)
+                    .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                finish("화면 확인 완료", "버튼 확인 완료 · " + at + " 예약됨. 실행 당일 잠금을 풀고 준비를 눌러 주세요.");
+                return;
+            }
             state(cachedButton == null ? "대기" : "준비 완료",
                 cachedButton == null ? "대상 버튼을 하나로 식별할 수 없습니다." : label + " 확인됨 · 예약 시각까지 대기", true);
             if (cachedButton == null) handler.postDelayed(probeTask, 500);
@@ -226,13 +242,23 @@ public class ClickService extends AccessibilityService {
         if (status.equals(p.getString("state", "")) && detail.equals(p.getString("detail", ""))
                 && active == p.getBoolean("active", false)) return;
         p.edit().putString("state", status).putString("detail", detail).putBoolean("active", active).apply();
+        boolean ready = "준비 완료".equals(status);
+        boolean terminal = !active && ("실패".equals(status) || "클릭 요청 완료".equals(status) || "화면 확인 완료".equals(status));
+        String when = java.time.Instant.ofEpochMilli(dueWall).atZone(MonthlyTime.SEOUL)
+            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"));
+        if (active || terminal) StatusNotifications.show(this, ready ? "준비 완료 · " + when + " 실행" : status,
+            ready ? "대상 버튼을 확인했습니다. 예약 시각까지 이 화면을 유지해 주세요." : detail,
+            active, ready || terminal);
+        else StatusNotifications.cancel(this);
     }
     private void clearSession() {
         handler.removeCallbacks(probeTask);
         handler.removeCallbacks(prevalidateTask);
         handler.removeCallbacks(fireTask);
+        handler.removeCallbacks(previewTimeout);
         preparing = false;
         running = false;
+        preview = false;
         cachedButton = null;
         releaseScreen();
     }
@@ -251,7 +277,8 @@ public class ClickService extends AccessibilityService {
             wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
                 getPackageName() + ":click-session");
             wakeLock.setReferenceCounted(false);
-            wakeLock.acquire(RunTiming.PREPARE_MS + RunTiming.GRACE_MS + 5000);
+            wakeLock.acquire(preview ? RunTiming.PREPARE_MS + 5000
+                : PreparationPolicy.keepAwakeTimeout(SystemClock.elapsedRealtime(), dueElapsed));
             Schedule.prefs(this).edit().putBoolean("screenKept", true).apply();
         } catch (RuntimeException e) {
             releaseScreen();
@@ -269,4 +296,3 @@ public class ClickService extends AccessibilityService {
             Schedule.prefs(this).edit().putBoolean("screenKept", false).apply();
     }
 }
-

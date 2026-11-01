@@ -10,4 +10,5 @@ java com.sun.tools.javac.Main -d "$test_output" tests/fakes/android/view/accessi
 java -cp "$test_output" kr.local.timedclick.AccessibilityMatcherTest
 java com.sun.tools.javac.Main -d "$test_output" app/src/main/java/kr/local/timedclick/WindowPolicy.java tests/WindowPolicyTest.java
 java -cp "$test_output" WindowPolicyTest
-
+java com.sun.tools.javac.Main -d "$test_output" app/src/main/java/kr/local/timedclick/RunTiming.java app/src/main/java/kr/local/timedclick/PreparationPolicy.java tests/PreparationPolicyTest.java
+java -cp "$test_output" PreparationPolicyTest
