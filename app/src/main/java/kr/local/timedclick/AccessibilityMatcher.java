@@ -7,7 +7,6 @@ import java.util.Set;
 
 final class AccessibilityMatcher {
     static final String QUICK = "빠른 충전 바로가기";
-    static final String CITY = "수원시";
     private static final int LIMIT = 2000;
 
     static String normalized(CharSequence value) {

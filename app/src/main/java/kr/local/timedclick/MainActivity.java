@@ -20,6 +20,7 @@ public class MainActivity extends Activity {
     private LinearLayout column;
     private TextView status, diagnostics;
     private Button prepareButton;
+    private Button regionButton;
     private int pendingAction;
     private boolean returningFromSettings;
     private String settingsAction = "";
@@ -50,14 +51,14 @@ public class MainActivity extends Activity {
         scroll.addView(column);
         setContentView(scroll);
         text("지역화폐 예약 클릭", 28);
-        text("수원시 · 매월 1일 오전 9시", 18);
+        regionButton = button("", this::chooseRegion);
         status = text("", 17);
         prepareButton = button("준비", () -> begin(PREPARE, false));
         prepareButton.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(5, 91, 166)));
         prepareButton.setTextColor(Color.WHITE);
         text("준비를 누르면 예약을 켜고 경기지역화폐 앱을 엽니다.\n버튼이 확인되면 알림으로 알려드립니다.", 15);
         button("시험 · 10초 후", () -> new AlertDialog.Builder(this).setTitle("클릭 시험")
-            .setMessage("경기지역화폐 앱을 자동으로 열고 10초 후 빠른 충전 → 수원시를 누릅니다. 충전·결제는 직접 진행합니다.")
+            .setMessage("경기지역화폐 앱을 자동으로 열고 10초 후 빠른 충전 → " + Schedule.region(this).label + "를 누릅니다. 충전·결제는 직접 진행합니다.")
             .setNegativeButton("취소", null).setPositiveButton("시험 시작", (d, w) -> begin(TEST, false)).show());
         button("중지", () -> { pendingAction = 0; Schedule.cancel(this); renderStatus(); });
         button("처음 설정 · 권한", this::showSettings);
@@ -67,8 +68,32 @@ public class MainActivity extends Activity {
         });
         diagnostics = text("", 14);
         diagnostics.setVisibility(View.GONE);
-        text("잠금 해제와 로그인은 직접 해 주세요.\n수원시 선택 후 금액 입력·인증·결제는 직접 진행합니다.", 14);
+        text("잠금 해제와 로그인은 직접 해 주세요.\n지역 선택 후 금액 입력·인증·결제는 직접 진행합니다.", 14);
         autoSelectTarget();
+        if (!Schedule.prefs(this).contains("region")) {
+            Schedule.prefs(this).edit().putString("region", Region.HWASEONG.id).apply();
+            Schedule.restore(this);
+        }
+    }
+
+    private void chooseRegion() {
+        if (ClickService.instance != null && ClickService.instance.isRunning()) {
+            toast("클릭 중에는 지역을 변경할 수 없습니다. 중지 후 변경해 주세요."); return;
+        }
+        Region[] regions = Region.values();
+        String[] labels = new String[regions.length];
+        for (int i = 0; i < regions.length; i++) labels[i] = regions[i].label + " · 매월 1일 " + regions[i].timeLabel();
+        new AlertDialog.Builder(this).setTitle("충전 지역 선택")
+            .setItems(labels, (d, which) -> {
+                if (Schedule.region(this) != regions[which]) {
+                    // A region change invalidates earlier reservations and prepared button nodes.
+                    pendingAction = 0;
+                    Schedule.cancel(this);
+                    Schedule.prefs(this).edit().putString("region", regions[which].id).apply();
+                    toast(regions[which].label + " " + regions[which].timeLabel() + " 선택됨. 준비를 눌러 주세요.");
+                }
+                renderStatus();
+            }).show();
     }
 
     private void autoSelectTarget() {
@@ -210,6 +235,8 @@ public class MainActivity extends Activity {
     }
     private void renderStatus() {
         android.content.SharedPreferences p = Schedule.prefs(this);
+        Region region = Schedule.region(this);
+        regionButton.setText(region.label + " · 매월 1일 " + region.timeLabel() + "  ▾");
         boolean connected = ClickService.instance != null;
         status.setText("다음 실행  " + at(p.getLong("next", 0), "MM-dd HH:mm")
             + "\n" + p.getString("state", "준비를 눌러 시작하세요.")

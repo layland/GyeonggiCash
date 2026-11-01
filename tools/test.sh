@@ -12,3 +12,5 @@ java com.sun.tools.javac.Main -d "$test_output" app/src/main/java/kr/local/timed
 java -cp "$test_output" WindowPolicyTest
 java com.sun.tools.javac.Main -d "$test_output" app/src/main/java/kr/local/timedclick/RunTiming.java app/src/main/java/kr/local/timedclick/PreparationPolicy.java tests/PreparationPolicyTest.java
 java -cp "$test_output" PreparationPolicyTest
+java com.sun.tools.javac.Main -d "$test_output" app/src/main/java/kr/local/timedclick/MonthlyTime.java app/src/main/java/kr/local/timedclick/Region.java tests/RegionTest.java
+java -cp "$test_output" RegionTest

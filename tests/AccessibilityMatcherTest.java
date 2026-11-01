@@ -22,7 +22,11 @@ public class AccessibilityMatcherTest {
         check(AccessibilityMatcher.regionSheet(node("충전하실 지역을\n선택해 주세요", false)));
         AccessibilityNodeInfo huge = node("수원시", true);
         for (int i = 0; i < 2001; i++) huge.add(node("", false));
-        check(AccessibilityMatcher.uniqueButton(huge, AccessibilityMatcher.CITY) == null);
-        System.out.println("8 button matching checks passed");
+        check(AccessibilityMatcher.uniqueButton(huge, "수원시") == null);
+        AccessibilityNodeInfo cities = node("충전하실 지역을 선택해 주세요", false);
+        AccessibilityNodeInfo suwon = node("수원시", true), hwaseong = node("화성시", true);
+        cities.add(suwon).add(node("용인시", true)).add(hwaseong);
+        check(AccessibilityMatcher.uniqueButton(cities, "화성시") == hwaseong);
+        System.out.println("9 button matching checks passed");
     }
 }
