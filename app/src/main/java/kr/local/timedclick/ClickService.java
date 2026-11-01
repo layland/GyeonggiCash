@@ -13,6 +13,7 @@ public class ClickService extends AccessibilityService {
     static ClickService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean preparing, running, test, preview;
+    private boolean readyAlerted;
     private long dueWall, dueElapsed;
     private int step;
     private String target = "";
@@ -73,6 +74,7 @@ public class ClickService extends AccessibilityService {
         target = Schedule.prefs(this).getString("package", "");
         if (target.isEmpty()) { state("실패", "대상 앱을 선택하세요.", false); return; }
         preparing = true;
+        readyAlerted = false;
         preview = requested && PreparationPolicy.previewOnly(System.currentTimeMillis(), chosen);
         step = 0;
         state("준비", "경기지역화폐 앱에서 버튼을 확인하고 있습니다. 로그인 화면이면 직접 로그인해 주세요.", true);
@@ -244,11 +246,13 @@ public class ClickService extends AccessibilityService {
         p.edit().putString("state", status).putString("detail", detail).putBoolean("active", active).apply();
         boolean ready = "준비 완료".equals(status);
         boolean terminal = !active && ("실패".equals(status) || "클릭 요청 완료".equals(status) || "화면 확인 완료".equals(status));
+        boolean alert = terminal || (ready && !readyAlerted);
+        if (ready) readyAlerted = true;
         String when = java.time.Instant.ofEpochMilli(dueWall).atZone(MonthlyTime.SEOUL)
             .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"));
         if (active || terminal) StatusNotifications.show(this, ready ? "준비 완료 · " + when + " 실행" : status,
             ready ? "대상 버튼을 확인했습니다. 예약 시각까지 이 화면을 유지해 주세요." : detail,
-            active, ready || terminal);
+            active, alert);
         else StatusNotifications.cancel(this);
     }
     private void clearSession() {
